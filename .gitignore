@@ -1,0 +1,31 @@
+# --- CMake / build outputs ---
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+
+# --- Binaries / objects ---
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+
+# --- Debug / symbols ---
+*.pdb
+*.dSYM/
+*.dbg
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+

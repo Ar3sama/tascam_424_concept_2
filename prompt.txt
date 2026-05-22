@@ -1,0 +1,30 @@
+Lis d’abord AGENTS.md pour comprendre l’architecture et les conventions de ce template JUCE.
+Inspecte ensuite les fichiers source principaux pour comprendre l’architecture actuelle avant de modifier le code.
+
+Ensuite, crée un plugin audio à partir de ce template.
+
+Objectif du plugin :
+[description du plugin]
+
+Parametres :
+- [paramètre 1]
+- [paramètre 2]
+- [paramètre 3]
+
+Contraintes :
+- respecte strictement AGENTS.md
+- garde le DSP dans source/dsp/ (cree de nouveaux fichiers source si necessair)
+- conserver un style lisible pedagogique et bien commenter pour les algorithmes de DSP
+- déclare les paramètres dans source/parameters/
+- utilise APVTS pour tous les paramètres
+- connecte l’UI avec des attachments JUCE
+- ne mets aucun DSP dans PluginEditor
+- respecte les règles temps réel dans processBlock()
+- ne modifie CMakeLists.txt que si nécessaire
+- conserve le bypass global existant
+
+Interface :
+[description de l’UI souhaitée]
+
+Build :
+Compile le target Standalone à la fin et corrige les erreurs si nécessaire.
