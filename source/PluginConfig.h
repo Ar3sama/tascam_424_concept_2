@@ -2,7 +2,7 @@
 
 namespace PluginConfig
 {
-    constexpr int defaultEditorWidth = 520;
-    constexpr int defaultEditorHeight = 340;
-    constexpr int editorMargin = 24;
+    constexpr int defaultEditorWidth = 900;
+    constexpr int defaultEditorHeight = 600;
+    constexpr int editorMargin = 18;
 }

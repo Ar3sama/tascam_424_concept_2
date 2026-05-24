@@ -15,6 +15,7 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
                        ),
        parameters (*this, nullptr, "Parameters", Parameters::createParameterLayout())
 {
+    cacheParameterPointers();
 }
 
 
@@ -90,7 +91,6 @@ void AudioPluginAudioProcessor::changeProgramName (int index, const juce::String
 //==============================================================================
 void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    //TODO : Prepare the ressources in the DSP file 
     dsp.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
 }
 
@@ -129,20 +129,128 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ignoreUnused (midiMessages);
 
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const auto totalNumInputChannels  = getTotalNumInputChannels();
+    const auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const auto numSamples = buffer.getNumSamples();
+
+    inputMeterLevel.store (calculateRmsLevel (buffer, totalNumInputChannels, numSamples),
+                           std::memory_order_relaxed);
 
     
     // clears any output channels that didn't contain input data
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+        buffer.clear (i, 0, numSamples);
 
     const auto bypass = parameters.getRawParameterValue (ParameterIDs::bypass)->load() > 0.5f;
 
     if (bypass)
+    {
+        outputMeterLevel.store (inputMeterLevel.load (std::memory_order_relaxed), std::memory_order_relaxed);
         return;
+    }
 
-    dsp.processBlock (buffer);
+    dsp.processBlock (buffer, loadPortastudioParameters());
+    outputMeterLevel.store (calculateRmsLevel (buffer, totalNumOutputChannels, numSamples),
+                            std::memory_order_relaxed);
+}
+
+float AudioPluginAudioProcessor::getInputMeterLevel() const noexcept
+{
+    return inputMeterLevel.load (std::memory_order_relaxed);
+}
+
+float AudioPluginAudioProcessor::getOutputMeterLevel() const noexcept
+{
+    return outputMeterLevel.load (std::memory_order_relaxed);
+}
+
+void AudioPluginAudioProcessor::cacheParameterPointers()
+{
+    const auto getParameter = [this] (const char* parameterID)
+    {
+        return parameters.getRawParameterValue (parameterID);
+    };
+
+    parameterPointers.inputGain = getParameter (ParameterIDs::inputGain);
+    parameterPointers.outputGain = getParameter (ParameterIDs::outputGain);
+    parameterPointers.drive = getParameter (ParameterIDs::drive);
+    parameterPointers.tapeAmount = getParameter (ParameterIDs::tapeAmount);
+    parameterPointers.saturation = getParameter (ParameterIDs::saturation);
+    parameterPointers.compression = getParameter (ParameterIDs::compression);
+    parameterPointers.mix = getParameter (ParameterIDs::mix);
+    parameterPointers.wow = getParameter (ParameterIDs::wow);
+    parameterPointers.flutter = getParameter (ParameterIDs::flutter);
+    parameterPointers.tapeSpeed = getParameter (ParameterIDs::tapeSpeed);
+    parameterPointers.bandwidth = getParameter (ParameterIDs::bandwidth);
+    parameterPointers.hysteresis = getParameter (ParameterIDs::hysteresis);
+    parameterPointers.bias = getParameter (ParameterIDs::bias);
+    parameterPointers.noiseAmount = getParameter (ParameterIDs::noiseAmount);
+    parameterPointers.crosstalk = getParameter (ParameterIDs::crosstalk);
+    parameterPointers.dropouts = getParameter (ParameterIDs::dropouts);
+    parameterPointers.dbxEnabled = getParameter (ParameterIDs::dbxEnabled);
+    parameterPointers.dbxAmount = getParameter (ParameterIDs::dbxAmount);
+    parameterPointers.oversampling = getParameter (ParameterIDs::oversampling);
+}
+
+PortastudioParameters AudioPluginAudioProcessor::loadPortastudioParameters() const noexcept
+{
+    const auto load = [] (const std::atomic<float>* parameter, float fallback) noexcept
+    {
+        return parameter != nullptr ? parameter->load (std::memory_order_relaxed) : fallback;
+    };
+
+    const auto loadPercent = [&load] (const std::atomic<float>* parameter, float fallback) noexcept
+    {
+        return PortastudioDsp::clamp01 (load (parameter, fallback) * 0.01f);
+    };
+
+    PortastudioParameters result;
+    result.inputGainDb = load (parameterPointers.inputGain, 0.0f);
+    result.outputGainDb = load (parameterPointers.outputGain, 0.0f);
+    result.drive = loadPercent (parameterPointers.drive, 35.0f);
+    result.tapeAmount = loadPercent (parameterPointers.tapeAmount, 65.0f);
+    result.saturation = loadPercent (parameterPointers.saturation, 45.0f);
+    result.compression = loadPercent (parameterPointers.compression, 35.0f);
+    result.mix = loadPercent (parameterPointers.mix, 100.0f);
+    result.wow = loadPercent (parameterPointers.wow, 18.0f);
+    result.flutter = loadPercent (parameterPointers.flutter, 12.0f);
+    result.tapeSpeedIndex = static_cast<int> (load (parameterPointers.tapeSpeed, 1.0f) + 0.5f);
+    result.bandwidth = loadPercent (parameterPointers.bandwidth, 65.0f);
+    result.hysteresis = loadPercent (parameterPointers.hysteresis, 35.0f);
+    result.bias = loadPercent (parameterPointers.bias, 50.0f);
+    result.noiseAmount = loadPercent (parameterPointers.noiseAmount, 12.0f);
+    result.crosstalk = loadPercent (parameterPointers.crosstalk, 18.0f);
+    result.dropouts = loadPercent (parameterPointers.dropouts, 5.0f);
+    result.dbxEnabled = load (parameterPointers.dbxEnabled, 1.0f) > 0.5f;
+    result.dbxAmount = loadPercent (parameterPointers.dbxAmount, 55.0f);
+    result.oversamplingIndex = static_cast<int> (load (parameterPointers.oversampling, 0.0f) + 0.5f);
+
+    return result;
+}
+
+float AudioPluginAudioProcessor::calculateRmsLevel (const juce::AudioBuffer<float>& buffer,
+                                                    int numChannels,
+                                                    int numSamples) noexcept
+{
+    const auto channelsToMeasure = juce::jmin (numChannels, buffer.getNumChannels());
+
+    if (channelsToMeasure <= 0 || numSamples <= 0)
+        return 0.0f;
+
+    double sum = 0.0;
+
+    for (int channel = 0; channel < channelsToMeasure; ++channel)
+    {
+        const auto* data = buffer.getReadPointer (channel);
+
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            const auto value = data[sample];
+            sum += static_cast<double> (value * value);
+        }
+    }
+
+    return static_cast<float> (std::sqrt (sum / static_cast<double> (channelsToMeasure * numSamples)));
 }
 
 //==============================================================================
